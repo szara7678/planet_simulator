@@ -13,26 +13,25 @@ import '../services/environment_service.dart';
 import '../services/code_modification_service.dart';
 import '../widgets/modals.dart';
 
-/// 간단한 ResourceData 클래스 (맵과 관련된 자원 기록을 위한)
+class AdvancedSimulationScreen extends StatefulWidget {
+  @override
+  _AdvancedSimulationScreenState createState() => _AdvancedSimulationScreenState();
+}
+
 class ResourceData {
   final int time;
   final int resource;
   ResourceData(this.time, this.resource);
 }
 
-class AdvancedSimulationScreen extends StatefulWidget {
-  @override
-  _AdvancedSimulationScreenState createState() => _AdvancedSimulationScreenState();
-}
-
 class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
     with SingleTickerProviderStateMixin {
-  double resourceCount = 100.0;
+  // 공통 행성 자원은 제거하고, 자원은 각각 Resource 객체로 관리
   List<String> historyLog = [];
   List<String> conversationHistory = [];
   List<AdvancedCreature> creatures = [];
   List<Resource> resources = [];
-  // 맵 크기를 600으로 확장
+  // 맵 크기를 600으로 확장하여 전체 화면을 꽉 채우도록 함
   final int simulationAreaSize = 600;
   final Random random = Random();
 
@@ -52,7 +51,7 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
   @override
   void initState() {
     super.initState();
-    // 초기 고도화 생명체 생성 (예: 10마리, 종족은 무작위 선택)
+    // 초기 고도화 생명체 생성 (예: 10마리, 가족은 무작위 지정)
     List<String> families = ['Alpha', 'Beta', 'Gamma'];
     for (int i = 0; i < 10; i++) {
       creatures.add(
@@ -83,11 +82,10 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
         ),
       );
     }
-    // 초기 자원 생성: 자원 유형을 무작위로 선택하여 다양한 특성 적용
+    // 초기 자원 생성: 8개, 자원 유형을 무작위로 선택하여 다양한 특성 적용
     List<String> resourceTypes = ['식량', '물', '에너지', '미네랄'];
     for (int i = 0; i < 8; i++) {
       String type = resourceTypes[random.nextInt(resourceTypes.length)];
-      // 각 자원 유형별 기본 특성을 간단히 설정 (예시)
       double maxQ = 100.0;
       double regen = 1.0;
       double depletion = 10.0;
@@ -136,19 +134,12 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
 
   void updateSimulation(double dt) {
     setState(() {
-      resourceCount -= 5 * dt;
-      if (resourceCount <= 0) resourceCount = 100;
-      historyLog.add("자원 업데이트: ${resourceCount.toStringAsFixed(1)}");
       updateCount++;
-      resourceHistory.add(ResourceData(updateCount, resourceCount.floor()));
-      if (resourceHistory.length > 100) {
-        resourceHistory.removeAt(0);
-      }
 
       // 생명체 업데이트 및 자원 소비 처리
       for (AdvancedCreature creature in creatures) {
         creature.updateSmooth(dt * environmentService.energyConsumptionMultiplier, simulationAreaSize);
-        // 자원 소비: 각 생명체가 인접한 자원을 소비
+        // 인접 자원 소비 처리: 각 생명체가 10픽셀 이내의 자원을 소비
         for (Resource resource in resources) {
           double dx = creature.x - resource.x;
           double dy = creature.y - resource.y;
@@ -163,15 +154,28 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
         historyLog.add("생명체 ${creature.id} (${creature.family}) 위치: (${creature.x.toStringAsFixed(1)}, ${creature.y.toStringAsFixed(1)}) 에너지: ${creature.energy}");
       }
 
-      // 자원 재생 (환경 재생 배수 적용)
+      // 자원 재생 (환경 배수를 적용)
       for (Resource resource in resources) {
         resource.regenerate(dt * environmentService.resourceRegenMultiplier);
+      }
+
+      // 자원 히스토리 업데이트: 매 업데이트마다 전체 자원 평균 수치를 기록
+      resourceHistory.add(ResourceData(updateCount, _calculateAverageResource()));
+      if (resourceHistory.length > 100) {
+        resourceHistory.removeAt(0);
       }
 
       if (historyLog.length > 100) {
         historyLog.removeAt(0);
       }
     });
+  }
+
+  /// 각 자원들의 평균 자원량 계산
+  int _calculateAverageResource() {
+    if (resources.isEmpty) return 0;
+    double total = resources.map((r) => r.quantity).reduce((a, b) => a + b);
+    return (total / resources.length).floor();
   }
 
   Future<void> _saveSimulationState() async {
@@ -185,15 +189,15 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
       };
     }).toList();
     String creaturesState = jsonEncode(creaturesData);
-    await DatabaseService().insertSimulationState(resourceCount, creaturesState);
+    await DatabaseService().insertSimulationState(_calculateAverageResource().toDouble(), creaturesState);
     setState(() {
-      historyLog.add("상태 저장됨: 자원 ${resourceCount.toStringAsFixed(1)}");
+      historyLog.add("상태 저장됨");
     });
   }
 
   void _checkEvolution() {
     List<AdvancedCreature> newCreatures = EvolutionService.checkAndEvolve(
-      resourceCount: resourceCount,
+      resourceCount: _calculateAverageResource().toDouble(),
       creatures: creatures,
       simulationAreaSize: simulationAreaSize,
       nextId: nextCreatureId,
@@ -207,6 +211,55 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
     }
   }
 
+  // 보고서용 콜백 함수들
+  Map<String, String> _getCreatureGroupReport() {
+    Map<String, List<AdvancedCreature>> groups = {};
+    for (var creature in creatures) {
+      String fam = creature.family;
+      if (!groups.containsKey(fam)) {
+        groups[fam] = [];
+      }
+      groups[fam]!.add(creature);
+    }
+    Map<String, String> report = {};
+    groups.forEach((family, list) {
+      int count = list.length;
+      double avgEnergy = list.map((c) => c.energy).reduce((a, b) => a + b) / count;
+      report[family] = "개체 수: $count, 평균 에너지: ${avgEnergy.toStringAsFixed(1)}";
+    });
+    return report;
+  }
+
+  Map<String, String> _getResourceGroupReport() {
+    Map<String, List<Resource>> groups = {};
+    for (var resource in resources) {
+      String type = resource.type;
+      if (!groups.containsKey(type)) {
+        groups[type] = [];
+      }
+      groups[type]!.add(resource);
+    }
+    Map<String, String> report = {};
+    groups.forEach((type, list) {
+      int count = list.length;
+      double avgQuantity = list.map((r) => r.quantity).reduce((a, b) => a + b) / count;
+      report[type] = "개수: $count, 평균 수량: ${avgQuantity.toStringAsFixed(1)}";
+    });
+    return report;
+  }
+
+  // 그룹별 역사 기록: 사용자 명령과 시스템 로그를 그룹화
+  List<String> _getGroupedHistoryLog() {
+    List<String> userCommands = historyLog.where((log) => log.startsWith("사용자 명령:")).toList();
+    List<String> systemLogs = historyLog.where((log) => !log.startsWith("사용자 명령:")).toList();
+    List<String> grouped = [];
+    grouped.add("사용자 명령:");
+    grouped.addAll(userCommands);
+    grouped.add("시스템 로그:");
+    grouped.addAll(systemLogs);
+    return grouped;
+  }
+
   void _handleUserCommand(String command) {
     if (command.toLowerCase().contains("날씨 변경")) {
       setState(() {
@@ -215,7 +268,6 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
     } else if (command.toLowerCase().contains("자원 추가")) {
       setState(() {
         historyLog.add("사용자 명령 처리: 자원 추가 요청");
-        // 자원 추가: 자원 유형을 사용자가 명령으로 지정할 수도 있음. 여기서는 식량을 예로 추가.
         resources.add(Resource(
           id: nextResourceId++,
           type: "식량",
@@ -239,44 +291,6 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
     }
   }
 
-  /// 보고서 생성을 위한 그룹별 통계 계산
-  Map<String, dynamic> _generateCreatureGroupReport() {
-    Map<String, List<AdvancedCreature>> groups = {};
-    for (var creature in creatures) {
-      String fam = creature.family;
-      if (!groups.containsKey(fam)) {
-        groups[fam] = [];
-      }
-      groups[fam]!.add(creature);
-    }
-    // 각 그룹의 개체 수와 평균 에너지 계산
-    Map<String, String> report = {};
-    groups.forEach((family, list) {
-      int count = list.length;
-      double avgEnergy = list.map((c) => c.energy).reduce((a, b) => a + b) / count;
-      report[family] = "개체 수: $count, 평균 에너지: ${avgEnergy.toStringAsFixed(1)}";
-    });
-    return report;
-  }
-
-  Map<String, dynamic> _generateResourceGroupReport() {
-    Map<String, List<Resource>> groups = {};
-    for (var resource in resources) {
-      String type = resource.type;
-      if (!groups.containsKey(type)) {
-        groups[type] = [];
-      }
-      groups[type]!.add(resource);
-    }
-    Map<String, String> report = {};
-    groups.forEach((type, list) {
-      int count = list.length;
-      double avgQuantity = list.map((r) => r.quantity).reduce((a, b) => a + b) / count;
-      report[type] = "개수: $count, 평균 수량: ${avgQuantity.toStringAsFixed(1)}";
-    });
-    return report;
-  }
-
   void showChatModal() {
     showModalBottomSheet(
       context: context,
@@ -294,20 +308,12 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
   }
 
   void showReportModal() {
-    int totalCreatures = creatures.length;
-    double avgEnergy = creatures.isNotEmpty
-        ? creatures.map((c) => c.energy).reduce((a, b) => a + b) / totalCreatures
-        : 0;
-    Map<String, dynamic> creatureGroupReport = _generateCreatureGroupReport();
-    Map<String, dynamic> resourceGroupReport = _generateResourceGroupReport();
     showModalBottomSheet(
       context: context,
       builder: (context) => ReportModal(
-        resourceCount: resourceCount.floor(),
-        totalCreatures: totalCreatures,
-        avgCreatureEnergy: avgEnergy,
-        creatureGroupReport: creatureGroupReport,
-        resourceGroupReport: resourceGroupReport,
+        getCurrentSeason: () => environmentService.currentSeason.toString().split('.').last,
+        getCreatureGroupReport: _getCreatureGroupReport,
+        getResourceGroupReport: _getResourceGroupReport,
       ),
     );
   }
@@ -315,7 +321,9 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
   void showHistoryModal() {
     showModalBottomSheet(
       context: context,
-      builder: (context) => HistoryModal(historyLog: historyLog),
+      builder: (context) => HistoryModal(
+        getHistoryLogGroup: _getGroupedHistoryLog,
+      ),
     );
   }
 
@@ -331,37 +339,40 @@ class _AdvancedSimulationScreenState extends State<AdvancedSimulationScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('고도화된 생태계 - 현재 계절: ${environmentService.currentSeason.toString().split('.').last}'),
-        actions: [
-          IconButton(icon: Icon(Icons.report), onPressed: showReportModal),
-          IconButton(icon: Icon(Icons.history), onPressed: showHistoryModal),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text('행성 자원', style: TextStyle(fontSize: 28)),
-            SizedBox(height: 10),
-            Text('${resourceCount.floor()}',
-                style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold)),
-            SizedBox(height: 20),
-            Container(
-              width: simulationAreaSize.toDouble(),
-              height: simulationAreaSize.toDouble(),
-              color: Colors.grey[300],
-              child: CustomPaint(
-                painter: SimulationPainter(creatures: creatures, resources: resources),
-              ),
+      // 전체 화면에 맵을 꽉 채우도록 함
+      body: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            child: CustomPaint(
+              painter: SimulationPainter(creatures: creatures, resources: resources),
             ),
-          ],
-        ),
+          ),
+          // 상단 오른쪽에 보고 및 역사 버튼을 배치 (메인 화면에는 계절 정보 표시하지 않음)
+          Positioned(
+            top: 40,
+            right: 16,
+            child: Column(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.report, color: Colors.white),
+                  onPressed: showReportModal,
+                ),
+                IconButton(
+                  icon: Icon(Icons.history, color: Colors.white),
+                  onPressed: showHistoryModal,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: showChatModal,
         child: Icon(Icons.chat),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }
